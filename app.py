@@ -1,49 +1,52 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.linear_model import LinearRegression
+import numpy as np
 
-st.title("Stock Price Trend Predictor 📈")
+st.title("Stock Price Trend Predictor")
 
-# User input
-ticker = st.text_input("Enter Stock Ticker (e.g. AAPL, MSFT):", value="AAPL").upper()
+# User inputs the stock ticker and date range
+ticker = st.text_input("Enter Stock Ticker", "AAPL")
+start_date = st.date_input("Start Date", value=pd.to_datetime("2022-01-01"))
+end_date = st.date_input("End Date", value=pd.to_datetime("2023-01-01"))
 
-if ticker:
-    # Download historical data
-    data = yf.download(ticker, period="5y", progress=False)
-    
+if ticker and start_date < end_date:
+    data = yf.download(ticker, start=start_date, end=end_date)
+
+    # Fix for multi-level columns (sometimes yfinance returns MultiIndex columns)
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+        
     if data.empty:
-        st.error("No data found for this ticker.")
+        st.error("No data found for this ticker and date range.")
     else:
-        st.subheader(f"Showing data for {ticker}")
+        # Show the raw data
+        st.subheader("Stock Data")
         st.write(data.tail())
 
-        # Prepare features
+        # Calculate daily returns (percentage change)
         data['Return'] = data['Adj Close'].pct_change()
-        data['Target'] = (data['Return'].shift(-1) > 0).astype(int)  # 1 if next day up else 0
-        data.dropna(inplace=True)
 
-        features = data[['Return']]
-        target = data['Target']
+        # Prepare data for trend prediction
+        data = data.dropna(subset=['Return'])
+        data['Day'] = np.arange(len(data)).reshape(-1, 1)
 
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, shuffle=False)
+        # Fit linear regression to predict return trend
+        model = LinearRegression()
+        model.fit(data[['Day']], data['Return'])
 
-        # Train model
-        model = LogisticRegression()
-        model.fit(X_train, y_train)
+        # Predict returns trend (next day)
+        next_day = np.array([[len(data)]])
+        predicted_return = model.predict(next_day)[0]
 
-        # Predict
-        y_pred = model.predict(X_test)
-        accuracy = accuracy_score(y_test, y_pred)
+        st.subheader("Predicted Next Day Return")
+        st.write(f"{predicted_return*100:.4f} %")
 
-        st.write(f"Model Accuracy on test set: {accuracy:.2%}")
-
-        # Predict next day trend using last return
-        last_return = features.iloc[-1].values.reshape(1, -1)
-        prediction = model.predict(last_return)[0]
-
-        trend = "Up 📈" if prediction == 1 else "Down 📉"
-        st.success(f"Predicted next day trend: **{trend}**")
+        # Show trend interpretation
+        if predicted_return > 0:
+            st.success("Trend looks positive! The stock price might go up tomorrow.")
+        else:
+            st.error("Trend looks negative! The stock price might go down tomorrow.")
+else:
+    st.info("Please enter a valid ticker and date range.")
