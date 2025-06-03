@@ -11,38 +11,41 @@ start_date = st.date_input("Start Date", pd.to_datetime("2022-01-01"))
 end_date = st.date_input("End Date", pd.to_datetime("2023-01-01"))
 
 if ticker and start_date < end_date:
-    data = yf.download(ticker, start=start_date, end=end_date)
+    try:
+        # Use yf.Ticker for more consistent results
+        stock = yf.Ticker(ticker)
+        data = stock.history(start=start_date, end=end_date)
 
-    # Show all columns to debug
-    st.subheader("📋 Data Columns")
-    st.write(data.columns.tolist())
+        # Fallback if 'Adj Close' is missing
+        if 'Adj Close' in data.columns:
+            close_col = 'Adj Close'
+        elif 'Close' in data.columns:
+            close_col = 'Close'
+        else:
+            st.error("No closing price data found.")
+            st.stop()
 
-    # Fix: Flatten MultiIndex if needed
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = [' '.join(col).strip() for col in data.columns.values]
+        st.subheader("📋 Data Preview")
+        st.write(data[[close_col]].tail())
 
-    # Debug: Show tail
-    st.subheader("📄 Raw Data Preview")
-    st.write(data.tail())
-
-    # Check for 'Adj Close'
-    if 'Adj Close' not in data.columns:
-        st.error("'Adj Close' column not found in data. Please try a different ticker.")
-    else:
-        # Proceed with analysis
-        data['Return'] = data['Adj Close'].pct_change()
+        # Calculate returns
+        data['Return'] = data[close_col].pct_change()
         data.dropna(inplace=True)
         data['Day'] = np.arange(len(data))
 
+        # Train linear regression model
         model = LinearRegression()
         model.fit(data[['Day']], data['Return'])
         next_day = np.array([[len(data)]])
         predicted_return = model.predict(next_day)[0]
 
         st.subheader("📊 Predicted Next Day Return")
-        st.write(f"{predicted_return*100:.4f} %")
+        st.write(f"{predicted_return * 100:.4f} %")
 
         if predicted_return > 0:
             st.success("📈 Positive trend: stock may go up.")
         else:
             st.error("📉 Negative trend: stock may go down.")
+
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
