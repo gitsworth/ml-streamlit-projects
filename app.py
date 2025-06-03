@@ -1,32 +1,67 @@
 import streamlit as st
-import tensorflow as tf
-import numpy as np
-from PIL import Image
+from googleapiclient.discovery import build
+from textblob import TextBlob
+import pandas as pd
 
-st.title("Image Classifier using MobileNetV2")
+# Load API key from secrets
+YOUTUBE_API_KEY = st.secrets["youtube"]["api_key"]
 
-# Load pre-trained MobileNetV2 model + weights
-model = tf.keras.applications.MobileNetV2(weights="imagenet")
+def get_youtube_comments(video_id, max_results=100):
+    youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+    comments = []
+    try:
+        response = youtube.commentThreads().list(
+            part="snippet",
+            videoId=video_id,
+            maxResults=max_results,
+            textFormat="plainText"
+        ).execute()
+        for item in response.get("items", []):
+            comment = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+            comments.append(comment)
+    except Exception as e:
+        st.error(f"Error fetching comments: {e}")
+    return comments
 
-# Function to preprocess the uploaded image
-def preprocess_image(image):
-    image = image.resize((224, 224))
-    img_array = tf.keras.preprocessing.image.img_to_array(image)
-    img_array = np.expand_dims(img_array, axis=0)
-    return tf.keras.applications.mobilenet_v2.preprocess_input(img_array)
+def analyze_sentiment(comments):
+    sentiments = []
+    for comment in comments:
+        analysis = TextBlob(comment)
+        polarity = analysis.sentiment.polarity
+        if polarity > 0:
+            sentiment = "Positive"
+        elif polarity == 0:
+            sentiment = "Neutral"
+        else:
+            sentiment = "Negative"
+        sentiments.append({"comment": comment, "sentiment": sentiment, "polarity": polarity})
+    return sentiments
 
-# Upload image
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+st.title("YouTube Video Comment Sentiment Analyzer")
 
-if uploaded_file:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Image", use_column_width=True)
+video_url = st.text_input("Enter YouTube video URL or Video ID:")
 
-    # Preprocess and predict
-    input_tensor = preprocess_image(image)
-    preds = model.predict(input_tensor)
-    decoded_preds = tf.keras.applications.mobilenet_v2.decode_predictions(preds, top=3)[0]
+if video_url:
+    # Extract video ID if full URL given
+    if "youtube.com" in video_url or "youtu.be" in video_url:
+        import re
+        # Simple regex to extract video ID from URL
+        video_id_search = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", video_url)
+        video_id = video_id_search.group(1) if video_id_search else video_url
+    else:
+        video_id = video_url
 
-    st.write("### Predictions:")
-    for i, (imagenetID, label, prob) in enumerate(decoded_preds):
-        st.write(f"{i+1}. {label}: {prob*100:.2f}%")
+    comments = get_youtube_comments(video_id)
+    if comments:
+        st.success(f"Fetched {len(comments)} comments!")
+
+        results = analyze_sentiment(comments)
+        df = pd.DataFrame(results)
+
+        st.subheader("Sentiment Counts")
+        st.bar_chart(df["sentiment"].value_counts())
+
+        st.subheader("Sample Comments and Sentiment")
+        st.dataframe(df.head(20))
+    else:
+        st.warning("No comments found or error fetching comments.")
