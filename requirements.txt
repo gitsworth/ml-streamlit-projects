@@ -1,4 +1,2 @@
 streamlit
-tensorflow
-pillow
-numpy
+tensorflow==2.10.0
