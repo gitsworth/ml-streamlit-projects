@@ -1,51 +1,56 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 from sklearn.linear_model import LinearRegression
+import numpy as np
 
 st.title("📈 Stock Price Trend Predictor")
 
-ticker = st.text_input("Enter Stock Ticker Symbol", "AAPL")
+# Sidebar input
+ticker = st.text_input("Enter Stock Ticker (e.g., AAPL, MSFT, TSLA):", value="AAPL")
 start_date = st.date_input("Start Date", pd.to_datetime("2022-01-01"))
-end_date = st.date_input("End Date", pd.to_datetime("2023-01-01"))
+end_date = st.date_input("End Date", pd.to_datetime("today"))
 
-if ticker and start_date < end_date:
-    try:
-        # Use yf.Ticker for more consistent results
-        stock = yf.Ticker(ticker)
-        data = stock.history(start=start_date, end=end_date)
+if start_date >= end_date:
+    st.error("End date must be after start date.")
+    st.stop()
 
-        # Fallback if 'Adj Close' is missing
-        if 'Adj Close' in data.columns:
-            close_col = 'Adj Close'
-        elif 'Close' in data.columns:
-            close_col = 'Close'
-        else:
-            st.error("No closing price data found.")
-            st.stop()
+# Fetch data
+data = yf.download(ticker, start=start_date, end=end_date)
 
-        st.subheader("📋 Data Preview")
-        st.write(data[[close_col]].tail())
+if data.empty:
+    st.error("No data found. Please check the ticker and date range.")
+    st.stop()
 
-        # Calculate returns
-        data['Return'] = data[close_col].pct_change()
-        data.dropna(inplace=True)
-        data['Day'] = np.arange(len(data))
+# Check for 'Adj Close', else use 'Close'
+if 'Adj Close' in data.columns:
+    price_column = 'Adj Close'
+elif 'Close' in data.columns:
+    price_column = 'Close'
+else:
+    st.error("Expected 'Adj Close' or 'Close' column in data.")
+    st.stop()
 
-        # Train linear regression model
-        model = LinearRegression()
-        model.fit(data[['Day']], data['Return'])
-        next_day = np.array([[len(data)]])
-        predicted_return = model.predict(next_day)[0]
+data['Return'] = data[price_column].pct_change()
+data = data.dropna()
 
-        st.subheader("📊 Predicted Next Day Return")
-        st.write(f"{predicted_return * 100:.4f} %")
+# Prepare data for prediction
+data['Day'] = np.arange(len(data)).reshape(-1, 1)
+X = data['Day'].values.reshape(-1, 1)
+y = data[price_column].values
 
-        if predicted_return > 0:
-            st.success("📈 Positive trend: stock may go up.")
-        else:
-            st.error("📉 Negative trend: stock may go down.")
+# Train model
+model = LinearRegression()
+model.fit(X, y)
 
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
+# Predict future price
+future_days = st.slider("Days into the future to predict", 1, 30, 7)
+future_index = np.array([[len(data) + future_days]])
+predicted_price = model.predict(future_index)[0]
+
+# Display
+st.subheader(f"Predicted Price for {ticker.upper()} after {future_days} days:")
+st.success(f"${predicted_price:.2f}")
+
+# Plot
+st.line_chart(data[price_column])
